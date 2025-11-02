@@ -1,97 +1,87 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Firebase Account Checker</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <title>Firebase Checker - VirenaLabs</title>
+    <style>
+        body { 
+            background: #1a1a1a; 
+            color: white; 
+            font-family: Arial; 
+            margin: 0; 
+            padding: 20px;
+        }
+        .container { max-width: 800px; margin: 0 auto; }
+        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 20px 0; }
+        .stat-card { background: #2d2d2d; padding: 15px; border-radius: 8px; text-align: center; }
+        button { 
+            background: #0070f3; 
+            color: white; 
+            border: none; 
+            padding: 10px 15px; 
+            margin: 5px; 
+            border-radius: 5px; 
+            cursor: pointer; 
+        }
+        button:hover { background: #0051a8; }
+        #logs { 
+            background: black; 
+            height: 300px; 
+            overflow-y: auto; 
+            padding: 15px; 
+            border-radius: 8px; 
+            margin-top: 20px;
+            font-family: monospace;
+        }
+    </style>
 </head>
-<body class="bg-gray-900 text-white min-h-screen">
-    <div class="container mx-auto px-4 py-8">
-        <!-- Header -->
-        <div class="text-center mb-8">
-            <h1 class="text-4xl font-bold text-blue-400 mb-2">
-                <i class="fas fa-fire"></i> Firebase Checker
-            </h1>
-            <p class="text-gray-400">Vercel Hosted Account Verification System</p>
-        </div>
-
-        <!-- Stats -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div class="bg-gray-800 p-4 rounded-lg text-center">
-                <div class="text-2xl font-bold" id="totalAttempts">0</div>
-                <div class="text-sm text-gray-400">Total Attempts</div>
+<body>
+    <div class="container">
+        <h1>🔥 Firebase Account Checker</h1>
+        <p>VirenaLabs - Vercel Deployment</p>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <div id="totalAttempts">0</div>
+                <div>Total</div>
             </div>
-            <div class="bg-gray-800 p-4 rounded-lg text-center">
-                <div class="text-2xl font-bold text-green-400" id="successfulLogins">0</div>
-                <div class="text-sm text-gray-400">Successful</div>
+            <div class="stat-card">
+                <div id="successfulLogins" style="color: #4ade80;">0</div>
+                <div>Success</div>
             </div>
-            <div class="bg-gray-800 p-4 rounded-lg text-center">
-                <div class="text-2xl font-bold text-red-400" id="failedLogins">0</div>
-                <div class="text-sm text-gray-400">Failed</div>
+            <div class="stat-card">
+                <div id="failedLogins" style="color: #f87171;">0</div>
+                <div>Failed</div>
             </div>
-            <div class="bg-gray-800 p-4 rounded-lg text-center">
-                <div class="text-2xl font-bold text-yellow-400" id="highCoinAccounts">0</div>
-                <div class="text-sm text-gray-400">200k+ Coins</div>
+            <div class="stat-card">
+                <div id="highCoinAccounts" style="color: #fbbf24;">0</div>
+                <div>200k+ Coins</div>
             </div>
         </div>
 
-        <!-- Status -->
-        <div class="mb-6 text-center">
-            <span id="statusBadge" class="px-4 py-2 rounded-full bg-red-500">
-                <i class="fas fa-circle mr-2"></i>Stopped
-            </span>
+        <div>
+            <button onclick="apiCall('start')">▶ Start</button>
+            <button onclick="apiCall('stop')">⏹ Stop</button>
+            <button onclick="apiCall('save/highcoin')">💎 Save High Coin</button>
+            <button onclick="apiCall('reset')">🔄 Reset</button>
         </div>
 
-        <!-- Controls -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <button onclick="apiCall('start')" class="bg-green-600 hover:bg-green-700 p-3 rounded-lg font-bold">
-                <i class="fas fa-play mr-2"></i>Start
-            </button>
-            <button onclick="apiCall('stop')" class="bg-red-600 hover:bg-red-700 p-3 rounded-lg font-bold">
-                <i class="fas fa-stop mr-2"></i>Stop
-            </button>
-            <button onclick="apiCall('save/highcoin')" class="bg-purple-600 hover:bg-purple-700 p-3 rounded-lg font-bold">
-                <i class="fas fa-download mr-2"></i>Save High Coin
-            </button>
-            <button onclick="apiCall('reset')" class="bg-gray-600 hover:bg-gray-700 p-3 rounded-lg font-bold">
-                <i class="fas fa-refresh mr-2"></i>Reset
-            </button>
-        </div>
+        <div>Status: <span id="status">Stopped</span></div>
 
-        <!-- Logs -->
-        <div class="bg-gray-800 rounded-lg p-4">
-            <h3 class="text-lg font-bold mb-3">
-                <i class="fas fa-terminal mr-2"></i>Activity Log
-            </h3>
-            <div id="logs" class="bg-black rounded p-3 h-64 overflow-y-auto font-mono text-sm">
-                <div class="text-gray-500">System ready. Click Start to begin...</div>
-            </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="text-center mt-8 text-gray-500">
-            <div>Powered by Vercel</div>
-        </div>
+        <div id="logs">Waiting for logs...</div>
     </div>
 
     <script>
-        // API calls
         async function apiCall(endpoint) {
             try {
-                const response = await fetch(`/api/${endpoint}`, {
-                    method: 'POST'
-                });
+                const response = await fetch(`/api/${endpoint}`, {method: 'POST'});
                 const data = await response.json();
-                showMessage(data.message || 'Action completed');
+                alert(data.message || 'Done');
                 updateStats();
             } catch (error) {
-                showMessage('Error: ' + error.message, 'error');
+                alert('Error: ' + error.message);
             }
         }
 
-        // Update stats
         async function updateStats() {
             try {
                 const response = await fetch('/api/stats');
@@ -103,58 +93,33 @@
                     document.getElementById('successfulLogins').textContent = stats.successful_logins;
                     document.getElementById('failedLogins').textContent = stats.failed_logins;
                     document.getElementById('highCoinAccounts').textContent = stats.high_coin_accounts;
-                    
-                    // Update status badge
-                    const badge = document.getElementById('statusBadge');
-                    badge.className = `px-4 py-2 rounded-full ${
-                        stats.status === 'Running' ? 'bg-green-500' : 'bg-red-500'
-                    }`;
-                    badge.innerHTML = `<i class="fas fa-circle mr-2"></i>${stats.status}`;
+                    document.getElementById('status').textContent = stats.status;
                 }
             } catch (error) {
-                console.error('Stats update error:', error);
+                console.error('Error:', error);
             }
         }
 
-        // Update logs
         async function updateLogs() {
             try {
                 const response = await fetch('/api/logs');
                 const data = await response.json();
                 
                 if (data.status === 'success') {
-                    const logsContainer = document.getElementById('logs');
-                    logsContainer.innerHTML = data.data.logs
-                        .map(log => `<div class="mb-1">${log}</div>`)
-                        .join('');
-                    logsContainer.scrollTop = logsContainer.scrollHeight;
+                    document.getElementById('logs').innerHTML = 
+                        data.data.logs.map(log => `<div>${log}</div>`).join('');
                 }
             } catch (error) {
-                console.error('Logs update error:', error);
+                console.error('Error:', error);
             }
         }
 
-        // Show message
-        function showMessage(message, type = 'success') {
-            const alert = document.createElement('div');
-            alert.className = `fixed top-4 right-4 p-4 rounded-lg ${
-                type === 'error' ? 'bg-red-500' : 'bg-green-500'
-            }`;
-            alert.textContent = message;
-            document.body.appendChild(alert);
-            
-            setTimeout(() => {
-                alert.remove();
-            }, 3000);
-        }
-
-        // Auto-update
+        // Auto-update every 2 seconds
         setInterval(() => {
             updateStats();
             updateLogs();
         }, 2000);
 
-        // Initial load
         updateStats();
         updateLogs();
     </script>
